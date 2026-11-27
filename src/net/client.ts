@@ -192,15 +192,22 @@ export class NetClient {
       }
       : null
 
+    const prevById = new Map(s0.es.map(e => [e[0], e]))
+    const invSpan = span > 1e-4 ? 1 / span : 0
     const enemies = s1.es.flatMap(e => {
       const meta = this.seqs.get(e[0])
       if (!meta) return []
+      const prev = prevById.get(e[0])
+      const x = prev ? lerp(prev[2], e[2]) : e[2]
+      const z = prev ? lerp(prev[3], e[3]) : e[3]
+      const y = prev ? lerp(prev[7], e[7]) : e[7]
+      const vx = prev ? (e[2] - prev[2]) * invSpan : 0
+      const vz = prev ? (e[3] - prev[3]) * invSpan : 0
+      const ang = Math.hypot(vx, vz) > 0.6 ? Math.atan2(vx, vz) : undefined
       return [{
         id: e[0],
         kind: ENEMY_KIND_ORDER[e[1]] ?? 'GRUNT',
-        x: e[2],
-        z: e[3],
-        y: e[7],
+        x, z, y, vx, vz, ang,
         ti: e[4],
         seq: meta.seq,
         hp: e[5],

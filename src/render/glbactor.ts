@@ -12,7 +12,7 @@ import { ACTOR_H } from '../core/constants'
 import { assets, type TemplateKey } from './assets'
 import type { ActorAnimState, ActorView } from './actor'
 
-export type GlbRole = 'PLAYER' | 'PLAYER2' | 'RUNNER' | 'GRUNT' | 'ELITE' | 'BOSS'
+export type GlbRole = 'PLAYER' | 'PLAYER2' | 'RUNNER' | 'GRUNT' | 'FLANKER' | 'ELITE' | 'BOSS'
 
 interface RoleConfig {
   template: TemplateKey
@@ -31,8 +31,9 @@ interface RoleConfig {
 const ROLES: Record<GlbRole, RoleConfig> = {
   PLAYER: { template: 'player', scale: 1, gun: { key: 'gunRifle', lenFrac: 0.55 }, lean: 0.12, swing: 0.85, bob: 1, stepRate: 0.85, secondaryGain: 1 },
   PLAYER2: { template: 'player', scale: 1, gun: { key: 'gunRifle', lenFrac: 0.55 }, lean: 0.12, swing: 0.85, bob: 1, stepRate: 0.85, tint: 0xb0a070, tintAmount: 0.32, secondaryGain: 1 },
-  RUNNER: { template: 'runner', scale: 0.82, lean: 0.26, swing: 1.2, bob: 1.1, stepRate: 1.05, secondaryGain: 1.1 },
-  GRUNT: { template: 'grunt', scale: 1, lean: 0.1, swing: 0.9, bob: 0.95, stepRate: 0.8, secondaryGain: 1 },
+  RUNNER: { template: 'runner', scale: 0.82, lean: 0.28, swing: 1.25, bob: 1.12, stepRate: 1.05, secondaryGain: 1.1 },
+  GRUNT: { template: 'grunt', scale: 1.16, lean: 0.08, swing: 0.85, bob: 1.2, stepRate: 0.68, tint: 0x3b3532, tintAmount: 0.22, secondaryGain: 0.9 },
+  FLANKER: { template: 'runner', scale: 0.94, gun: { key: 'gunPistol', lenFrac: 0.24 }, lean: 0.2, swing: 1.05, bob: 1.0, stepRate: 0.95, tint: 0x3b6e68, tintAmount: 0.26, secondaryGain: 1.15 },
   ELITE: { template: 'grunt', scale: 1.15, gun: { key: 'gunSmg', lenFrac: 0.30 }, lean: 0.08, swing: 0.85, bob: 0.9, stepRate: 0.8, tint: 0x9a5a2a, tintAmount: 0.18, secondaryGain: 1 },
   BOSS: { template: 'boss', scale: 2.3, lean: 0.16, swing: 0.6, bob: 1.5, stepRate: 0.62, secondaryGain: 1.4 },
 }
@@ -128,11 +129,17 @@ export class GlbActor implements ActorView {
 
   private phase = Math.random() * 6
   private t = Math.random() * 6
+  private spawnT = 0
   private hurtT = 0
   private shotAt = -1e9
   private deadT = 0
   private moveW = 0
   private aimW = 0
+  private strafeW = 0
+  private staggerW = 0
+  private windupW = 0
+  private recoverW = 0
+  private prevSin = 0
   private readonly seed = Math.random() * 10
   private prevWorldPos = new THREE.Vector3()
   private velLocal = new THREE.Vector3()
@@ -159,6 +166,7 @@ export class GlbActor implements ActorView {
     this.snapshotBones()
     if (cfg.gun) this.attachGun(cfg.gun.key, cfg.gun.lenFrac)
     this.addMuzzleFlash()
+    this.root.scale.setScalar(0.25)
   }
 
   /* ------------------------------------------------ setup ------------------------------------------------ */
@@ -473,8 +481,16 @@ export class GlbActor implements ActorView {
   reset(): void {
     this.dead = false
     this.deadT = 0
+    this.spawnT = 0
     this.hurtT = 0
+    this.moveW = 0
+    this.aimW = 0
+    this.strafeW = 0
+    this.staggerW = 0
+    this.windupW = 0
+    this.recoverW = 0
     this.root.rotation.x = 0
+    this.root.scale.setScalar(0.25)
     for (const ctl of Object.values(this.j)) {
       if (!ctl) continue
       ctl.bone.quaternion.copy(ctl.restQ)
@@ -500,19 +516,38 @@ export class GlbActor implements ActorView {
     this.t += dt
     const k = 1 - Math.exp(-dt * 12)
 
+    if (this.spawnT < 1) {
+      this.spawnT = Math.min(1, this.spawnT + dt / 0.36)
+      const u = 1 - this.spawnT
+      const back = 1 + 0.12 * Math.sin(this.spawnT * Math.PI) * u
+      this.root.scale.setScalar((0.25 + 0.75 * (1 - u * u * u)) * back)
+    } else {
+      this.root.scale.setScalar(1)
+    }
+
     // Smoothed weights.
-    this.moveW += ((st.moving && !this.dead ? 1 : 0) - this.moveW) * k
-    this.aimW += ((st.aiming && !this.dead ? 1 : 0) - this.aimW) * (1 - Math.exp(-dt * 10))
+    const alive = !this.dead
+    this.moveW += ((st.moving && alive ? 1 : 0) - this.moveW) * k
+    this.aimW += (((st.aiming || (st.windup ?? 0) > 0) && alive ? 1 : 0) - this.aimW) * (1 - Math.exp(-dt * 10))
+    this.strafeW += (((st.strafe ?? 0) * (alive ? 1 : 0)) - this.strafeW) * k
+    this.staggerW += ((st.stagger && alive ? 1 : 0) - this.staggerW) * (1 - Math.exp(-dt * 16))
+    this.windupW += (((st.windup ?? 0) * (alive ? 1 : 0)) - this.windupW) * (1 - Math.exp(-dt * 14))
+    this.recoverW += (((st.recover ?? 0) * (alive ? 1 : 0)) - this.recoverW) * (1 - Math.exp(-dt * 12))
 
     const moving = this.moveW > 0.02
-    if (moving) this.phase += dt * Math.max(2, st.speed * cfg.stepRate)
+    if (moving) this.phase += dt * Math.max(2, st.speed * cfg.stepRate * Math.max(0.35, this.moveW))
     const p = this.phase
     const s = Math.sin(p)
+    if (alive && !st.air && this.moveW > 0.35 && ((this.prevSin <= 0 && s > 0) || (this.prevSin >= 0 && s < 0))) {
+      st.onStep?.()
+    }
+    this.prevSin = s
+
     const rec = Math.max(0, 1 - (performance.now() - this.shotAt) / 130)
     if (this.muzzleFlash && rec < 0.08) this.muzzleFlash.visible = false
     this.hurtT = Math.max(0, this.hurtT - dt)
-    const hurt = this.hurtT > 0 ? Math.sin((this.hurtT / 0.4) * Math.PI) : 0
-    const breathe = Math.sin(this.t * 1.7 + this.seed) * 0.022
+    const hurt = Math.max(this.staggerW * 0.85, this.hurtT > 0 ? Math.sin((this.hurtT / 0.4) * Math.PI) : 0)
+    const breathe = Math.sin(this.t * 1.7 + this.seed) * 0.025
     const w = this.moveW * cfg.swing
 
     /* ---- death: tip over backwards and let go ---- */
@@ -530,27 +565,28 @@ export class GlbActor implements ActorView {
       return
     }
 
-    /* ---- hips: bob + sway ---- */
+    /* ---- hips: bob + sway + strafe roll ---- */
     const hips = this.j.hips
+    const strafeRoll = this.strafeW * 0.14
     if (hips) {
-      const bob = Math.abs(s) * this.hipsRestY * 0.028 * cfg.bob * this.moveW + breathe * this.hipsRestY * 0.1
+      const bob = Math.abs(s) * this.hipsRestY * 0.028 * cfg.bob * this.moveW + breathe * this.hipsRestY * 0.1 - this.staggerW * this.hipsRestY * 0.06
       hips.bone.position.y += (this.hipsRestY + bob - hips.bone.position.y) * k
-      swing(hips, 0, s * 0.055 * w)
-      hips.bone.rotation.y = s * 0.09 * w
+      swing(hips, -this.staggerW * 0.12, s * 0.055 * w + strafeRoll * 0.5)
+      hips.bone.rotation.y = s * 0.09 * w - this.strafeW * 0.22
     }
 
     /* ---- spine + head ---- */
-    const lean = cfg.lean * this.moveW + hurt * -0.14
-    if (this.j.spine) swing(this.j.spine, lean + breathe, -s * 0.04 * w)
-    if (this.j.spine1) swing(this.j.spine1, breathe * 0.6 + hurt * 0.1, -s * 0.035 * w - hurt * 0.08)
+    const lean = cfg.lean * this.moveW - hurt * 0.26 - this.windupW * 0.14 + this.recoverW * 0.12
+    if (this.j.spine) swing(this.j.spine, lean + breathe, -s * 0.04 * w + strafeRoll * 0.7)
+    if (this.j.spine1) swing(this.j.spine1, breathe * 0.6 + hurt * 0.1, -s * 0.035 * w - hurt * 0.1)
     if (this.j.spine2) swing(this.j.spine2, -lean * 0.4, s * 0.02 * w)
-    if (this.j.neck) swing(this.j.neck, -lean * 0.5 + hurt * 0.12, s * 0.012 * w)
+    if (this.j.neck) swing(this.j.neck, -lean * 0.5 + hurt * 0.16, s * 0.012 * w)
     if (this.j.head) {
       const look = Math.sin(this.t * 0.6 + this.seed) * 0.05 * (1 - this.moveW)
-      swing(this.j.head, -lean * 0.3 + hurt * 0.22, look)
+      swing(this.j.head, -lean * 0.3 + hurt * 0.28 + this.windupW * 0.12, look - strafeRoll * 0.4)
     }
 
-    /* ---- legs: walk cycle ---- */
+    /* ---- legs: walk cycle + strafe/stagger ---- */
     const air = st.air
     const legAmp = 0.62 * w
     const uplegL = this.j.uplegL
@@ -563,45 +599,51 @@ export class GlbActor implements ActorView {
       if (legL) swing(legL, 1.05, 0)
       if (legR) swing(legR, 0.45, 0)
     } else {
-      if (uplegL) swing(uplegL, s * legAmp - 0.03, -0.05 - Math.abs(s) * 0.03 * w)
-      if (uplegR) swing(uplegR, -s * legAmp - 0.03, 0.05 + Math.abs(s) * 0.03 * w)
-      if (legL) swing(legL, Math.max(0, -s) * (1.05 * cfg.swing + 0.35) * Math.max(0.25, this.moveW) + 0.06, 0)
-      if (legR) swing(legR, Math.max(0, s) * (1.05 * cfg.swing + 0.35) * Math.max(0.25, this.moveW) + 0.06, 0)
+      const stagBend = this.staggerW * 0.3
+      if (uplegL) swing(uplegL, s * legAmp - 0.03 + this.staggerW * 0.2, -0.05 - Math.abs(s) * 0.03 * w - Math.max(0, -this.strafeW) * 0.15)
+      if (uplegR) swing(uplegR, -s * legAmp - 0.03 - this.staggerW * 0.15, 0.05 + Math.abs(s) * 0.03 * w + Math.max(0, this.strafeW) * 0.15)
+      if (legL) swing(legL, Math.max(0, -s) * (1.05 * cfg.swing + 0.35) * Math.max(0.25, this.moveW) + 0.06 + stagBend, 0)
+      if (legR) swing(legR, Math.max(0, s) * (1.05 * cfg.swing + 0.35) * Math.max(0.25, this.moveW) + 0.06 + stagBend * 0.8, 0)
       if (this.j.footL) swing(this.j.footL, -s * 0.28 * w - 0.04, 0)
       if (this.j.footR) swing(this.j.footR, s * 0.28 * w - 0.04, 0)
     }
 
-    /* ---- arms ---- */
+    /* ---- arms: walk, aim, windup telegraph, recoil & stagger ---- */
     const armAmp = 0.5 * w
     const hasGun = !!this.gunMount
     if (hasGun) {
-      // Right arm: blend walk-swing → aim pose; recoil kicks it up/back.
+      const windLift = this.windupW * 0.35 - this.recoverW * 0.22
+      // Right arm: blend walk-swing → aim pose; windup raises, recoil kicks.
       const armR = this.j.armR!
-      swing(armR, -s * armAmp * 0.4, 0)
+      swing(armR, -s * armAmp * 0.4 - hurt * 0.25, -hurt * 0.35)
       _q1.copy(armR.bone.quaternion)
       armR.bone.quaternion.copy(_q1).slerp(this.aimArmQ, this.aimW)
-      if (rec > 0) armR.bone.quaternion.premultiply(_q2.setFromAxisAngle(armR.px, -0.3 * rec))
+      if (Math.abs(windLift) > 0.01) armR.bone.quaternion.premultiply(_q2.setFromAxisAngle(armR.px, -windLift))
+      if (rec > 0) armR.bone.quaternion.premultiply(_q2.setFromAxisAngle(armR.px, -0.32 * rec))
       const foreR = this.j.foreR!
       swing(foreR, -0.14 - Math.max(0, s) * 0.25 * w, 0)
       _q1.copy(foreR.bone.quaternion)
       foreR.bone.quaternion.copy(_q1).slerp(this.aimForeQ, this.aimW)
+      if (windLift > 0.01) foreR.bone.quaternion.premultiply(_q2.setFromAxisAngle(foreR.px, -0.25 * windLift))
       foreR.bone.quaternion.premultiply(_q2.setFromAxisAngle(foreR.px, 0.45 * rec))
       // Left arm: supports the gun when aiming, swings otherwise.
       const armL = this.j.armL!
-      swing(armL, -(-s) * armAmp, 0)
+      swing(armL, -(-s) * armAmp - hurt * 0.25, hurt * 0.35)
       _q1.copy(armL.bone.quaternion)
       armL.bone.quaternion.copy(_q1).slerp(this.aimArmLQ, this.aimW)
+      if (windLift > 0.01) armL.bone.quaternion.premultiply(_q2.setFromAxisAngle(armL.px, -windLift * 0.8))
       const foreL = this.j.foreL!
       swing(foreL, -0.3 - Math.max(0, -s) * 0.3 * w, 0)
       _q1.copy(foreL.bone.quaternion)
       foreL.bone.quaternion.copy(_q1).slerp(this.aimForeLQ, this.aimW)
     } else {
       const armSwing = 0.62 * w
-      const flinch = hurt * 0.5
-      if (this.j.armL) swing(this.j.armL, -s * armSwing - flinch * 0.4, -0.06 - hurt * 0.2 + Math.sin(this.t * 1.3 + this.seed) * 0.02)
-      if (this.j.armR) swing(this.j.armR, s * armSwing - flinch * 0.4, 0.06 + hurt * 0.2 - Math.sin(this.t * 1.3 + this.seed) * 0.02)
-      if (this.j.foreL) swing(this.j.foreL, -0.3 - Math.max(0, s) * 0.45 * w - flinch * 0.5, 0)
-      if (this.j.foreR) swing(this.j.foreR, -0.3 - Math.max(0, -s) * 0.45 * w - flinch * 0.5, 0)
+      const flinch = hurt * 0.55
+      const windRaise = this.windupW * 0.75
+      if (this.j.armL) swing(this.j.armL, -s * armSwing - flinch * 0.4 - windRaise, -0.06 - hurt * 0.28 + Math.sin(this.t * 1.3 + this.seed) * 0.02)
+      if (this.j.armR) swing(this.j.armR, s * armSwing - flinch * 0.4 - windRaise, 0.06 + hurt * 0.28 - Math.sin(this.t * 1.3 + this.seed) * 0.02)
+      if (this.j.foreL) swing(this.j.foreL, -0.3 - Math.max(0, s) * 0.45 * w - flinch * 0.5 - windRaise * 0.5, 0)
+      if (this.j.foreR) swing(this.j.foreR, -0.3 - Math.max(0, -s) * 0.45 * w - flinch * 0.5 - windRaise * 0.5, 0)
     }
 
     this.updateJiggle(dt, 1)

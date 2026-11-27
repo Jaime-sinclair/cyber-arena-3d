@@ -33,10 +33,11 @@ export class GameRenderer {
   quality: Quality
 
   constructor(canvas: HTMLCanvasElement, wantQuality: Quality = 'high') {
-    this.quality = wantQuality === 'high' && isSoftwareRenderer() ? 'low' : wantQuality
+    const sw = isSoftwareRenderer()
+    this.quality = wantQuality === 'high' && sw ? 'low' : wantQuality
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      antialias: !sw,
       powerPreference: 'high-performance',
     })
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
@@ -54,6 +55,7 @@ export class GameRenderer {
     this.composer?.dispose()
     this.composer = null
     this.bloomPass = null
+    this.renderer.shadowMap.enabled = this.quality === 'high'
     if (this.quality !== 'high') return
     const size = new THREE.Vector2(window.innerWidth, window.innerHeight)
     this.composer = new EffectComposer(this.renderer)
@@ -73,7 +75,8 @@ export class GameRenderer {
   resize(): void {
     const w = window.innerWidth
     const h = window.innerHeight
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
+    const dpr = this.quality === 'low' ? 1 : Math.min(window.devicePixelRatio || 1, 1.5)
+    this.renderer.setPixelRatio(dpr)
     this.renderer.setSize(w, h)
     this.composer?.setSize(w, h)
     this.camera.aspect = w / h

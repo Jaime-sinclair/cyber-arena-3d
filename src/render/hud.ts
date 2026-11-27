@@ -15,6 +15,7 @@ function el(tag: string, cls?: string, text?: string): HTMLElement {
 
 export interface HudCallbacks {
   onPause(): void
+  onCycleCamera?: () => void
 }
 
 export class Hud {
@@ -40,6 +41,13 @@ export class Hud {
   private readonly partnerLives: HTMLElement
   private readonly modeEl: HTMLElement
   private readonly seedEl: HTMLElement
+  private readonly camChip: HTMLButtonElement
+  private readonly currLevelEl: HTMLElement
+  private readonly currDiffEl: HTMLElement
+  private readonly currMasteredEl: HTMLElement
+  private readonly currRemainEl: HTMLElement
+  private readonly currAccEl: HTMLElement
+  private readonly currFill: HTMLElement
   private cache = new Map<string, string>()
   private partnerVisible = false
 
@@ -124,6 +132,35 @@ export class Hud {
     this.partnerLives = el('span', 'partner-lives', '')
     this.partnerChip.append(this.partnerName, this.partnerScore, this.partnerLives)
 
+    // Right rail: curriculum progression placard
+    const curr = el('div', 'u p curr-panel')
+    const currHead = el('div', 'curr-head')
+    currHead.append(el('span', 'hud-label', 'CURRICULUM'))
+    this.currLevelEl = el('b', 'curr-level', 'BEGINNER')
+    currHead.append(this.currLevelEl)
+    this.currDiffEl = el('div', 'curr-diff', 'HOME ROW · 3–4 CH')
+    const currBar = el('div', 'curr-bar')
+    this.currFill = el('i')
+    currBar.append(this.currFill)
+    const currStats = el('div', 'curr-stats')
+    this.currMasteredEl = el('b', '', '0')
+    this.currRemainEl = el('b', '', '0')
+    this.currAccEl = el('b', '', '100%')
+    currStats.append(
+      el('span', '', 'MASTERED '), this.currMasteredEl,
+      el('span', '', ' · LEFT '), this.currRemainEl,
+      el('br'),
+      el('span', '', 'VOCAB ACC '), this.currAccEl,
+    )
+    curr.append(currHead, this.currDiffEl, currBar, currStats)
+
+    // Camera mode chip (clickable + Tab)
+    this.camChip = document.createElement('button')
+    this.camChip.className = 'u p cam-chip'
+    this.camChip.type = 'button'
+    this.camChip.textContent = 'CAM · STANDARD [TAB]'
+    this.camChip.addEventListener('click', () => cb.onCycleCamera?.())
+
     // Mode / seed chip
     const modeChip = el('div', 'u p mode-chip')
     this.modeEl = el('span', '', '')
@@ -138,14 +175,14 @@ export class Hud {
     // Status line + controls hint
     const bottom = el('div', 'u hud-bottom')
     this.statusEl = el('div', 'p status', 'RANGE HOT')
-    const hint = el('div', 'p hint', 'HOME ROW ANCHORED · KEEP F/J ON YOUR INDEXES · SPACE JUMP · SHIFT SPRINT · ESC PAUSE')
+    const hint = el('div', 'p hint', 'HOME ROW ANCHORED · SPACE JUMP · SHIFT SPRINT · TAB CAMERA · ESC PAUSE')
     bottom.append(this.statusEl, hint)
 
     const pauseBtn = el('button', 'u pause-btn', 'II')
     pauseBtn.setAttribute('aria-label', 'Pause')
     pauseBtn.addEventListener('click', cb.onPause)
 
-    this.root.append(tl, tc, tr, this.bossBar, this.comboWrap, meters, st, this.partnerChip, modeChip, tk, bottom, pauseBtn)
+    this.root.append(tl, tc, tr, this.bossBar, this.comboWrap, meters, st, this.partnerChip, curr, this.camChip, modeChip, tk, bottom, pauseBtn)
     parent.append(this.root)
   }
 
@@ -170,6 +207,10 @@ export class Hud {
     this.set(this.partnerName, 'pname', name)
   }
 
+  setCameraMode(label: string): void {
+    this.set(this.camChip, 'cam', `CAM · ${label} [TAB]`)
+  }
+
   update(vm: ViewModel, threat: number, wpmVal: number, accVal: number): void {
     const p = vm.players[0]
     if (p) {
@@ -191,11 +232,22 @@ export class Hud {
     this.bossBar.style.display = boss ? 'block' : 'none'
     if (boss) this.bossFill.style.width = `${Math.max(0, vm.bossHp / vm.bossMax) * 100}%`
 
-    // Target key: locked enemy, else nearest.
+    // Target key: locked enemy, else threat-prioritized candidate, else first.
     const lock = vm.enemies.find(e => e.id === vm.lockId)
-    const target = lock ?? vm.enemies[0]
+    const cand = vm.candidateId !== undefined && vm.candidateId >= 0 ? vm.enemies.find(e => e.id === vm.candidateId) : undefined
+    const target = lock ?? cand ?? vm.enemies[0]
     const ch = target ? (target.seq[target.ti] ?? '-') : '-'
     this.set(this.targetEl, 'tk', ch === ' ' ? '␣' : ch)
+
+    if (vm.curriculum) {
+      const c = vm.curriculum
+      this.set(this.currLevelEl, 'clevel', c.level)
+      this.set(this.currDiffEl, 'cdiff', c.difficultyLabel)
+      this.set(this.currMasteredEl, 'cmast', String(c.masteredCount))
+      this.set(this.currRemainEl, 'crem', String(c.remainingInLevel))
+      this.set(this.currAccEl, 'cacc', `${c.accuracy}%`)
+      this.currFill.style.width = `${Math.round(c.levelProgress * 100)}%`
+    }
 
     const status = vm.over === 1
       ? 'RANGE CLEAR'

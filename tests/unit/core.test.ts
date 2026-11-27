@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { RNG, hashString, isValidCode, randomCode } from '../../src/core/rng'
 import { decode, encode, inputToMsg, msgToInput, type NetMsg } from '../../src/core/protocol'
 import { accuracy, dailySeed, formatClock, formatScore, rank, wpm } from '../../src/core/stats'
-import { adaptiveEnemySpeedScale, enemyWordLength, selectTrainingWord, trainingStage } from '../../src/core/typing'
+import { CurriculumTracker, adaptiveEnemySpeedScale, enemyWordLength, selectTrainingWord, trainingStage } from '../../src/core/typing'
 
 describe('rng', () => {
   it('same seed → identical sequence', () => {
@@ -144,5 +144,31 @@ describe('adaptive typing curriculum', () => {
     expect(adaptiveEnemySpeedScale(15)).toBeCloseTo(0.55)
     expect(adaptiveEnemySpeedScale(100)).toBe(1)
     expect(adaptiveEnemySpeedScale(150)).toBe(1)
+  })
+
+  it('tracks hybrid mastery, spaced review, and deduplicated word selection', () => {
+    const tracker = new CurriculumTracker({ promoteThreshold: 2 })
+    const rng = new RNG('curr-1')
+    expect(tracker.currentLevel(1)).toBe('BEGINNER')
+    const active = new Set<string>()
+    const w1 = tracker.pickWord('RUNNER', 1, 0, active, rng)
+    active.add(w1)
+    const w2 = tracker.pickWord('RUNNER', 1, 0, active, rng)
+    expect(w2).not.toBe(w1)
+
+    // One clean completion is not mastered yet; two clean completions masters it.
+    tracker.recordResult(w1, true, 500)
+    expect(tracker.snapshot(1).masteredCount).toBe(0)
+    tracker.recordResult(w1, true, 480)
+    expect(tracker.snapshot(1).masteredCount).toBe(1)
+
+    // Missing a word queues it for review without blocking progression.
+    tracker.recordResult(w2, false)
+    expect(tracker.snapshot(1).reviewCount).toBe(1)
+    // After 2 cooldown picks, the 3rd pickWord returns the missed word for review.
+    tracker.pickWord('RUNNER', 1, 0, new Set(), rng)
+    tracker.pickWord('RUNNER', 1, 0, new Set(), rng)
+    const reviewed = tracker.pickWord('RUNNER', 1, 0, new Set(), rng)
+    expect(reviewed).toBe(w2)
   })
 })

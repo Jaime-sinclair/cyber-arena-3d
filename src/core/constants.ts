@@ -49,7 +49,7 @@ export const INTERP_DELAY = 0.12
 
 export const FIXED_DT = TICK
 
-export type EnemyKind = 'RUNNER' | 'GRUNT' | 'ELITE' | 'BOSS'
+export type EnemyKind = 'RUNNER' | 'GRUNT' | 'FLANKER' | 'ELITE' | 'BOSS'
 
 export interface KindDef {
   color: number
@@ -62,11 +62,12 @@ export interface KindDef {
   boss: boolean
 }
 
-/** Kind colors: real-world paint — sand, brick, rust, signal red. */
+/** Kind colors: real-world paint — sand, brick, tactical teal, rust, signal red. */
 export const KINDS: Record<EnemyKind, KindDef> = {
-  RUNNER: { color: 0xdfa93b, scale: 0.82, speed: 13, radius: 1.4, value: 80, gun: false, shoot: false, boss: false },
-  GRUNT: { color: 0xc0452f, scale: 1.0, speed: 8.5, radius: 1.8, value: 100, gun: false, shoot: false, boss: false },
-  ELITE: { color: 0xcc5f26, scale: 1.15, speed: 7, radius: 1.9, value: 200, gun: true, shoot: true, boss: false },
+  RUNNER: { color: 0xdfa93b, scale: 0.82, speed: 14.5, radius: 1.4, value: 80, gun: false, shoot: false, boss: false },
+  GRUNT: { color: 0xc0452f, scale: 1.16, speed: 7.4, radius: 2.0, value: 110, gun: false, shoot: false, boss: false },
+  FLANKER: { color: 0x56c2a8, scale: 0.94, speed: 11.4, radius: 1.5, value: 140, gun: true, shoot: false, boss: false },
+  ELITE: { color: 0xcc5f26, scale: 1.15, speed: 7.2, radius: 1.9, value: 200, gun: true, shoot: true, boss: false },
   BOSS: { color: 0xa83524, scale: 2.3, speed: 3.5, radius: 4.5, value: 2000, gun: false, shoot: false, boss: true },
 }
 

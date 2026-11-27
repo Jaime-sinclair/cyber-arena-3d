@@ -32,6 +32,17 @@ test('starts a solo run, spawns the HUD, and reacts to typing', async ({ page })
   await page.keyboard.type('ASDF')
   await page.waitForTimeout(800)
   await expect(hud).toBeVisible()
+
+  // Curriculum panel & camera mode switcher must render and cycle via Tab without breaking typing.
+  await expect(page.locator('#hud .curr-panel')).toBeVisible()
+  await expect(page.locator('#hud .cam-chip')).toContainText('STANDARD')
+  await page.keyboard.press('Tab')
+  await expect(page.locator('#hud .cam-chip')).toContainText('WIDE TACTICAL')
+  await page.keyboard.press('Tab')
+  await expect(page.locator('#hud .cam-chip')).toContainText('COMBAT FOCUS')
+  await page.keyboard.press('Tab')
+  await expect(page.locator('#hud .cam-chip')).toContainText('OVERVIEW')
+
   expect(errors).toEqual([])
 })
 

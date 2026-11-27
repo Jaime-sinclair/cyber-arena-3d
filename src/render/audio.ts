@@ -8,7 +8,7 @@
 export type SfxName =
   | 'hit' | 'miss' | 'step' | 'damage' | 'boom' | 'dash' | 'pickup'
   | 'ui' | 'wave' | 'boss' | 'shoot' | 'shock' | 'win' | 'lose'
-  | 'blast' | 'mortar' | 'thud'
+  | 'blast' | 'mortar' | 'thud' | 'windup' | 'milestone' | 'combo'
 
 export interface AudioSettings {
   musicVolume: number
@@ -104,6 +104,9 @@ export class AudioEngine {
       case 'wave': [523, 659, 784].forEach((f, i) => this.tone(f, 0.2, 0.08, 'square', 1.1, i * 0.09)); break
       case 'boss': this.tone(55, 1.2, 0.16, 'sawtooth', 0.5); this.noise(0.8, 0.14, 300); break
       case 'shoot': this.tone(220, 0.08, 0.05, 'sawtooth', 0.5); break
+      case 'windup': this.tone(860, 0.22, 0.045, 'triangle', 1.45); break
+      case 'milestone': this.tone(72, 0.35, 0.16, 'sine', 0.45); [587, 740, 880, 1175].forEach((f, i) => this.tone(f, 0.24, 0.08, 'triangle', 1.05, i * 0.055)); break
+      case 'combo': [660, 990].forEach((f, i) => this.tone(f, 0.14, 0.07, 'sine', 1.15, i * 0.05)); break
       case 'shock': this.tone(90, 0.5, 0.12, 'sawtooth', 0.3); this.noise(0.5, 0.1, 400); break
       case 'blast': this.noise(0.7, 0.3, 320); this.tone(46, 0.55, 0.2, 'sine', 0.5); this.noise(0.22, 0.18, 1500, 0.02); this.noise(0.5, 0.12, 900, 0.06); break
       case 'mortar': this.tone(1350, 0.85, 0.06, 'sine', 0.24); break
@@ -111,6 +114,13 @@ export class AudioEngine {
       case 'win': [523, 659, 784, 1046].forEach((f, i) => this.tone(f, 0.35, 0.09, 'sine', 1, i * 0.1)); break
       case 'lose': [400, 300, 200, 100].forEach((f, i) => this.tone(f, 0.3, 0.1, 'sawtooth', 0.8, i * 0.12)); break
     }
+  }
+
+  /** Combo-pitched typing hit confirmation for crisp tactile feedback. */
+  hitKey(combo: number): void {
+    if (!this.ctx) return
+    const pitch = 500 * (1 + Math.min(combo, 18) * 0.035)
+    this.tone(pitch, 0.065, 0.055, 'triangle', 0.65)
   }
 
   /* ---------------- procedural music ---------------- */

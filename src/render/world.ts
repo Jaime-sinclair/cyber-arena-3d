@@ -50,18 +50,33 @@ export class World {
   readonly keyLight: THREE.DirectionalLight
   readonly playerLight: THREE.PointLight
   readonly boomLight: THREE.PointLight
+  private readonly hemiLight: THREE.HemisphereLight
+  private readonly scene: THREE.Scene
   private readonly dust: THREE.Points
   private readonly sky: THREE.Mesh
+  private readonly padBeaconMat: THREE.MeshStandardMaterial
+  private readonly floodHeadMat: THREE.MeshStandardMaterial
+  private readonly floodConeMat: THREE.MeshBasicMaterial
+  private readonly targetBg = new THREE.Color(0xb8b2a2)
+  private readonly targetFog = new THREE.Color(0xbdb5a3)
+  private readonly targetSun = new THREE.Color(0xffd2a0)
+  private readonly targetBeacon = new THREE.Color(0xe89b32)
+  private targetFogDensity = 0.0019
+  private targetSunIntensity = 2.4
+  private dustRate = 0.01
+  private t = 0
   private readonly disposables: Array<{ dispose(): void }> = []
   private heroAdded = false
   private readonly offAssetsReady: () => void
 
   constructor(scene: THREE.Scene) {
+    this.scene = scene
     scene.background = new THREE.Color(0xb8b2a2)
     scene.fog = new THREE.FogExp2(0xbdb5a3, 0.0019)
 
     /* ---------- lights: golden hour, overcast breaking ---------- */
-    scene.add(new THREE.HemisphereLight(0xb9c3cf, 0x8a7f6a, 0.75))
+    this.hemiLight = new THREE.HemisphereLight(0xb9c3cf, 0x8a7f6a, 0.75)
+    scene.add(this.hemiLight)
     this.keyLight = new THREE.DirectionalLight(0xffd2a0, 2.4)
     this.keyLight.castShadow = true
     this.keyLight.shadow.mapSize.set(1024, 1024)
@@ -178,6 +193,25 @@ export class World {
     pad.renderOrder = 1
     scene.add(pad)
 
+    /* ---------- helipad perimeter beacons ---------- */
+    this.padBeaconMat = new THREE.MeshStandardMaterial({
+      color: 0x3b3d36,
+      roughness: 0.4,
+      metalness: 0.7,
+      emissive: 0xe89b32,
+      emissiveIntensity: 0.7,
+    })
+    {
+      const beacons = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.45, 0.58, 0.26, 8), this.padBeaconMat, 8)
+      const mt = new THREE.Matrix4()
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 + Math.PI / 8
+        mt.makeTranslation(Math.cos(a) * 25.5, 0.13, Math.sin(a) * 25.5)
+        beacons.setMatrixAt(i, mt)
+      }
+      scene.add(beacons)
+    }
+
     /* ---------- base backdrop: barracks, hangar, towers, treeline, hills ---------- */
     this.buildBase(scene)
 
@@ -188,9 +222,15 @@ export class World {
     {
       const N = 28
       const poleMat = new THREE.MeshStandardMaterial({ color: 0x3d4038, roughness: 0.6, metalness: 0.7 })
-      const headMat = new THREE.MeshStandardMaterial({ color: 0x2a2c26, roughness: 0.5, metalness: 0.6, emissive: 0xffd9a0, emissiveIntensity: 0.35 })
+      this.floodHeadMat = new THREE.MeshStandardMaterial({ color: 0x2a2c26, roughness: 0.5, metalness: 0.6, emissive: 0xffd9a0, emissiveIntensity: 0.35 })
+      this.floodConeMat = new THREE.MeshBasicMaterial({ color: 0xffe4b8, transparent: true, opacity: 0.045, blending: THREE.AdditiveBlending, depthWrite: false })
       const poles = new THREE.InstancedMesh(new THREE.BoxGeometry(0.9, 15, 0.9), poleMat, N)
-      const heads = new THREE.InstancedMesh(new THREE.BoxGeometry(3.4, 1.4, 1.2), headMat, N)
+      const heads = new THREE.InstancedMesh(new THREE.BoxGeometry(3.4, 1.4, 1.2), this.floodHeadMat, N)
+      const cones = new THREE.InstancedMesh(
+        new THREE.ConeGeometry(4.2, 10.5, 8, 1, true),
+        this.floodConeMat,
+        N,
+      )
       const mt = new THREE.Matrix4()
       let n = 0
       for (let i = -3; i <= 3; i++) {
@@ -200,11 +240,13 @@ export class World {
           poles.setMatrixAt(n, mt)
           mt.makeTranslation(x, 15.2, z)
           heads.setMatrixAt(n, mt)
+          mt.makeTranslation(x, 9.6, z)
+          cones.setMatrixAt(n, mt)
           n++
         }
       }
       poles.castShadow = true
-      scene.add(poles, heads)
+      scene.add(poles, heads, cones)
     }
 
     /* ---------- obstacles: CONEX containers ---------- */
@@ -483,9 +525,21 @@ export class World {
     this.disposables.push(linkTex)
   }
 
-  /** CONEX shipping containers: corrugated steel with stencil markings. */
+  /** CONEX shipping containers: corrugated steel, frame rails, roof ribs & contact AO. */
   private buildContainers(scene: THREE.Scene): void {
     const STENCILS = ['ORDNANCE', '5.56 MM', 'SUPPLY', 'AMMO LOT 7', 'RATIONS', 'SPARES'] as const
+    const trimMat = new THREE.MeshStandardMaterial({ color: 0x2c2f28, roughness: 0.55, metalness: 0.65 })
+    const aoTex = makeTexture(128, (g, s) => {
+      const grad = g.createRadialGradient(s / 2, s / 2, s * 0.15, s / 2, s / 2, s * 0.5)
+      grad.addColorStop(0, 'rgba(10, 10, 8, 0.42)')
+      grad.addColorStop(0.75, 'rgba(10, 10, 8, 0.24)')
+      grad.addColorStop(1, 'rgba(10, 10, 8, 0)')
+      g.fillStyle = grad
+      g.fillRect(0, 0, s, s)
+    })
+    const aoMat = new THREE.MeshBasicMaterial({ map: aoTex, transparent: true, depthWrite: false })
+    this.disposables.push(aoTex)
+
     OBSTACLES.forEach((o, i) => {
       const olive = i % 2 === 0
       const base = olive ? C.olive : C.rust
@@ -535,13 +589,87 @@ export class World {
       body.position.y = o.h / 2
       body.castShadow = body.receiveShadow = true
       g.add(body)
+
+      // Structural frame posts + roof ribs merged into 1 draw call per container.
+      const trimGeos: THREE.BufferGeometry[] = []
+      for (const sx of [-1, 1] as const) {
+        for (const sz of [-1, 1] as const) {
+          const post = new THREE.BoxGeometry(0.65, o.h + 0.15, 0.65)
+          post.translate(sx * (o.hw - 0.15), o.h / 2, sz * (o.hd - 0.15))
+          trimGeos.push(post)
+        }
+      }
+      const ribStep = 2.6
+      for (let rx = -o.hw + 1.5; rx <= o.hw - 1.5; rx += ribStep) {
+        const rib = new THREE.BoxGeometry(0.45, 0.25, o.hd * 1.92)
+        rib.translate(rx, o.h + 0.1, 0)
+        trimGeos.push(rib)
+      }
+      const trimMesh = new THREE.Mesh(mergeGeometries(trimGeos)!, trimMat)
+      trimMesh.castShadow = false
+      for (const tg of trimGeos) tg.dispose()
+      g.add(trimMesh)
+
+      // Ground-contact AO skirt
+      const ao = new THREE.Mesh(new THREE.PlaneGeometry(o.hw * 2 + 3.2, o.hd * 2 + 3.2), aoMat)
+      ao.rotation.x = -Math.PI / 2
+      ao.position.y = 0.04
+      g.add(ao)
+
       g.position.set(o.x, 0, o.z)
       scene.add(g)
+      this.disposables.push(tex)
     })
   }
 
+  /** Smoothly transition lighting & atmospheric state across waves and boss encounters. */
+  setAtmosphere(wave: number, bossActive: boolean): void {
+    if (bossActive || wave >= 3) {
+      this.targetBg.setHex(0x887b75)
+      this.targetFog.setHex(0x8d7f78)
+      this.targetSun.setHex(0xeba888)
+      this.targetBeacon.setHex(0xe84a2c)
+      this.targetFogDensity = 0.0024
+      this.targetSunIntensity = 2.0
+      this.dustRate = 0.025
+      this.floodHeadMat.emissiveIntensity = 0.9
+      this.floodConeMat.opacity = 0.075
+    } else if (wave === 2) {
+      this.targetBg.setHex(0xa89d8d)
+      this.targetFog.setHex(0xad9f8c)
+      this.targetSun.setHex(0xffbc78)
+      this.targetBeacon.setHex(0xe88a2c)
+      this.targetFogDensity = 0.0021
+      this.targetSunIntensity = 2.25
+      this.dustRate = 0.016
+      this.floodHeadMat.emissiveIntensity = 0.65
+      this.floodConeMat.opacity = 0.06
+    } else {
+      this.targetBg.setHex(0xb8b2a2)
+      this.targetFog.setHex(0xbdb5a3)
+      this.targetSun.setHex(0xffd2a0)
+      this.targetBeacon.setHex(0xe89b32)
+      this.targetFogDensity = 0.0019
+      this.targetSunIntensity = 2.4
+      this.dustRate = 0.01
+      this.floodHeadMat.emissiveIntensity = 0.35
+      this.floodConeMat.opacity = 0.045
+    }
+  }
+
   update(dt: number, px: number, pz: number, cameraPos: THREE.Vector3): void {
-    this.dust.rotation.y += dt * 0.01
+    this.t += dt
+    const k = Math.min(1, dt * 1.5)
+    if (this.scene.background instanceof THREE.Color) this.scene.background.lerp(this.targetBg, k)
+    if (this.scene.fog instanceof THREE.FogExp2) {
+      this.scene.fog.color.lerp(this.targetFog, k)
+      this.scene.fog.density += (this.targetFogDensity - this.scene.fog.density) * k
+    }
+    this.keyLight.color.lerp(this.targetSun, k)
+    this.keyLight.intensity += (this.targetSunIntensity - this.keyLight.intensity) * k
+    this.padBeaconMat.emissive.lerp(this.targetBeacon, k)
+    this.padBeaconMat.emissiveIntensity = 0.55 + 0.35 * Math.sin(this.t * 2.6)
+    this.dust.rotation.y += dt * this.dustRate
     this.sky.position.copy(cameraPos)
     // Low western sun: constant direction relative to the player (shadow follows).
     this.keyLight.position.set(px - 85, 48, pz + 32)

@@ -139,6 +139,22 @@ html, body {
 .mode-chip { bottom: 14px; right: 14px; font-size: 10px; color: var(--ink-muted); letter-spacing: .14em }
 .mode-chip .seed { color: var(--ink-muted) }
 
+.cam-chip {
+  bottom: 50px; right: 14px; font-size: 10px; color: var(--ink); letter-spacing: .14em;
+  pointer-events: auto; cursor: pointer;
+  transition: border-color var(--t) var(--ease), color var(--t) var(--ease);
+}
+.cam-chip:hover { border-color: var(--accent); color: var(--accent) }
+
+.curr-panel { top: 158px; right: 14px; width: 184px; padding: 9px 12px }
+.curr-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px }
+.curr-level { font-family: var(--font-stencil); font-size: 13px; letter-spacing: .12em; color: var(--accent) }
+.curr-diff { font-family: var(--font-data); font-size: 9.5px; color: var(--ink-muted); letter-spacing: .1em; margin-top: 3px }
+.curr-bar { height: 6px; background: var(--bg-inset); border: 1px solid var(--line-soft); margin: 6px 0; overflow: hidden }
+.curr-bar i { display: block; height: 100%; width: 0%; background: var(--ok); transition: width .25s var(--ease) }
+.curr-stats { font-family: var(--font-data); font-size: 10px; color: var(--ink-muted); line-height: 1.55 }
+.curr-stats b { color: var(--ink); font-weight: 600 }
+
 /* next-key plate — the placard shooters read at a glance */
 .tk-plate {
   bottom: 74px; left: 50%; transform: translateX(-50%);
@@ -326,7 +342,7 @@ html, body {
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
 
 @media (max-width: 720px) {
-  .meters, .runstats { display: none }
+  .meters, .runstats, .curr-panel { display: none }
   .hud-bottom .hint { display: none }
   .tk-plate { bottom: 92px; transform: translateX(-50%) scale(.85) }
   #menu { background: oklch(19% 0.012 150 / 92%) }

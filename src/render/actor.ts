@@ -154,6 +154,16 @@ export interface ActorAnimState {
   aiming: boolean
   speed: number
   air: boolean
+  /** Lateral strafe component (-1 left .. +1 right). */
+  strafe?: number
+  /** Stagger / knockback state. */
+  stagger?: boolean
+  /** Attack windup / preparation progress (0..1). */
+  windup?: number
+  /** Attack recovery progress (0..1). */
+  recover?: number
+  /** Animation event hook invoked on grounded footstep impacts. */
+  onStep?: () => void
 }
 
 /**
@@ -177,10 +187,19 @@ export class Actor implements ActorView {
   private readonly bones: THREE.Bone[] = []
   private readonly skeleton: THREE.Skeleton
   private readonly palette: Palette
+  private readonly baseScale: number
   private phase = Math.random() * 6
   private t = Math.random() * 6
+  private spawnT = 0
   private hurtT = 0
   private shotAt = -1e9
+  private moveW = 0
+  private aimW = 0
+  private strafeW = 0
+  private staggerW = 0
+  private windupW = 0
+  private recoverW = 0
+  private prevSin = 0
   dead = false
   private deadT = 0
 
@@ -223,7 +242,8 @@ export class Actor implements ActorView {
       flash.name = 'muzzleFlash'
       ;(this.j.foreR as THREE.Object3D).add(flash)
     }
-    this.root.scale.setScalar((ACTOR_H / 6) * (p.scale ?? 1))
+    this.baseScale = (ACTOR_H / 6) * (p.scale ?? 1)
+    this.root.scale.setScalar(this.baseScale * 0.25)
   }
 
   private get flash(): THREE.Object3D | null {
@@ -251,7 +271,16 @@ export class Actor implements ActorView {
   reset(): void {
     this.dead = false
     this.deadT = 0
+    this.spawnT = 0
+    this.hurtT = 0
+    this.moveW = 0
+    this.aimW = 0
+    this.strafeW = 0
+    this.staggerW = 0
+    this.windupW = 0
+    this.recoverW = 0
     this.root.rotation.x = 0
+    this.root.scale.setScalar(this.baseScale * 0.25)
   }
 
   muzzle(out = new THREE.Vector3()): THREE.Vector3 {
@@ -266,12 +295,34 @@ export class Actor implements ActorView {
       o.rotation.z += (z - o.rotation.z) * k
     }
     this.t += dt
+    if (this.spawnT < 1) {
+      this.spawnT = Math.min(1, this.spawnT + dt / 0.36)
+      const u = 1 - this.spawnT
+      const back = 1 + 0.14 * Math.sin(this.spawnT * Math.PI) * u
+      this.root.scale.setScalar(this.baseScale * (0.25 + 0.75 * (1 - u * u * u)) * back)
+    } else {
+      this.root.scale.setScalar(this.baseScale)
+    }
+
     const alive = !this.dead
-    const moving = st.moving && alive
-    if (moving) this.phase += dt * (st.speed || 10)
+    const blendK = 1 - Math.exp(-dt * 12)
+    this.moveW += ((st.moving && alive ? 1 : 0) - this.moveW) * blendK
+    this.aimW += (((st.aiming || (st.windup ?? 0) > 0) && alive ? 1 : 0) - this.aimW) * (1 - Math.exp(-dt * 10))
+    this.strafeW += (((st.strafe ?? 0) * (alive ? 1 : 0)) - this.strafeW) * blendK
+    this.staggerW += ((st.stagger && alive ? 1 : 0) - this.staggerW) * (1 - Math.exp(-dt * 16))
+    this.windupW += (((st.windup ?? 0) * (alive ? 1 : 0)) - this.windupW) * (1 - Math.exp(-dt * 14))
+    this.recoverW += (((st.recover ?? 0) * (alive ? 1 : 0)) - this.recoverW) * (1 - Math.exp(-dt * 12))
+
+    const moving = this.moveW > 0.02
+    if (moving) this.phase += dt * Math.max(2, (st.speed || 10) * Math.max(0.35, this.moveW))
     const s = Math.sin(this.phase)
-    const rec = Math.max(0, 1 - (performance.now() - this.shotAt) / 120)
-    const breathe = Math.sin(this.t * 2) * 0.02
+    if (alive && !st.air && this.moveW > 0.35 && ((this.prevSin <= 0 && s > 0) || (this.prevSin >= 0 && s < 0))) {
+      st.onStep?.()
+    }
+    this.prevSin = s
+
+    const rec = Math.max(0, 1 - (performance.now() - this.shotAt) / 130)
+    const breathe = Math.sin(this.t * 2) * 0.025
     const f = this.flash
     if (f && rec < 0.05) f.visible = false
     this.hurtT = Math.max(0, this.hurtT - dt)
@@ -297,31 +348,39 @@ export class Actor implements ActorView {
       return
     }
 
-    const hurt = this.hurtT > 0 ? Math.sin((this.hurtT / 0.4) * Math.PI) : 0
-    hips.position.y += (2.8 + (moving ? Math.abs(s) * 0.13 : breathe) - hips.position.y) * k
-    ease(j.spine!, (moving ? 0.14 : 0) + breathe - hurt * 0.5 - rec * 0.1, s * 0.05 * (moving ? 1 : 0))
-    ease(j.head!, (moving ? -0.07 : 0) + hurt * 0.4)
-    ease(j.legL!, s * 0.8 * (moving ? 1 : 0))
-    ease(j.legR!, -s * 0.8 * (moving ? 1 : 0))
-    ease(j.shinL!, Math.max(0, -s) * 1.1 * (moving ? 1 : 0) + 0.1)
-    ease(j.shinR!, Math.max(0, s) * 1.1 * (moving ? 1 : 0) + 0.1)
+    const hurt = Math.max(this.staggerW * 0.85, this.hurtT > 0 ? Math.sin((this.hurtT / 0.4) * Math.PI) : 0)
+    const w = this.moveW
+    const lean = 0.16 * w - hurt * 0.5 - rec * 0.1 - this.windupW * 0.18 + this.recoverW * 0.14
+    const strafeRoll = this.strafeW * 0.14
+    hips.position.y += (2.8 + Math.abs(s) * 0.13 * w + breathe * (1 - w) - this.staggerW * 0.25 - this.recoverW * 0.12 - hips.position.y) * k
+    hips.rotation.y += (s * 0.08 * w - this.strafeW * 0.2 - hips.rotation.y) * k
+    ease(j.spine!, lean + breathe, s * 0.05 * w + strafeRoll)
+    ease(j.head!, -0.07 * w + hurt * 0.42 + this.windupW * 0.12, -strafeRoll * 0.5)
+    ease(j.legL!, s * 0.8 * w + this.staggerW * 0.22, -Math.max(0, -this.strafeW) * 0.16)
+    ease(j.legR!, -s * 0.8 * w - this.staggerW * 0.18, Math.max(0, this.strafeW) * 0.16)
+    ease(j.shinL!, Math.max(0, -s) * 1.1 * w + 0.1 + this.staggerW * 0.35)
+    ease(j.shinR!, Math.max(0, s) * 1.1 * w + 0.1 + this.staggerW * 0.25)
     if (st.air) {
       ease(j.legL!, -0.6)
       ease(j.legR!, 0.25)
       ease(j.shinL!, 1.1)
       ease(j.shinR!, 0.4)
     }
-    if (this.palette.gun) {
-      const aiming = st.aiming || rec > 0
-      ease(j.armR!, aiming ? -1.15 - rec * 0.12 : -0.5 - s * 0.1 * (moving ? 1 : 0), -0.05)
-      ease(j.foreR!, aiming ? -0.4 : -0.5)
-      ease(j.armL!, aiming ? -1.25 : -0.5, aiming ? 0.4 : 0.25)
-      ease(j.foreL!, -0.8)
+    if (this.palette.gun || this.palette.playerRifle) {
+      const aimMix = Math.max(this.aimW, rec)
+      const windLift = this.windupW * 0.32 - this.recoverW * 0.24
+      const rx = (-0.5 - s * 0.12 * w) * (1 - aimMix) + (-1.15 - rec * 0.14 - windLift) * aimMix - hurt * 0.35
+      const rz = -0.05 - hurt * 0.45
+      ease(j.armR!, rx, rz)
+      ease(j.foreR!, -0.5 * (1 - aimMix) + (-0.4 - windLift * 0.5) * aimMix)
+      ease(j.armL!, -0.5 * (1 - aimMix) + (-1.25 - windLift * 0.6) * aimMix - hurt * 0.3, 0.25 * (1 - aimMix) + 0.4 * aimMix + hurt * 0.45)
+      ease(j.foreL!, -0.8 - windLift * 0.4)
     } else {
-      ease(j.armL!, -s * 0.75 * (moving ? 1 : 0) + 0.1 - hurt, 0.12 + hurt * 0.9)
-      ease(j.armR!, s * 0.75 * (moving ? 1 : 0) + 0.1 - hurt, -0.12 - hurt * 0.9)
-      ease(j.foreL!, -0.35 - Math.max(0, s) * 0.5 * (moving ? 1 : 0) - hurt * 0.6)
-      ease(j.foreR!, -0.35 - Math.max(0, -s) * 0.5 * (moving ? 1 : 0) - hurt * 0.6)
+      const windRaise = this.windupW * 0.85
+      ease(j.armL!, -s * 0.75 * w + 0.1 - hurt - windRaise, 0.12 + hurt * 0.9 + this.windupW * 0.35)
+      ease(j.armR!, s * 0.75 * w + 0.1 - hurt - windRaise, -0.12 - hurt * 0.9 - this.windupW * 0.35)
+      ease(j.foreL!, -0.35 - Math.max(0, s) * 0.5 * w - hurt * 0.6 - this.windupW * 0.5)
+      ease(j.foreR!, -0.35 - Math.max(0, -s) * 0.5 * w - hurt * 0.6 - this.windupW * 0.5)
     }
   }
 }
@@ -332,7 +391,8 @@ export const PLAYER_PALETTE: Palette = { suit: 0x4a5240, armor: 0x353b2e, neon: 
 export const PLAYER2_PALETTE: Palette = { suit: 0x8a7a5c, armor: 0x5c523c, neon: 0xe9e4d2, gun: false, scale: 1, playerRifle: true }
 export const ENEMY_PALETTES: Record<string, Palette> = {
   RUNNER: { suit: 0x3f4536, armor: 0x2e3329, neon: 0xdfa93b, hood: true, scale: 0.82 },
-  GRUNT: { suit: 0x43392f, armor: 0x322b24, neon: 0xc0452f, hood: true, scale: 1 },
+  GRUNT: { suit: 0x43392f, armor: 0x322b24, neon: 0xc0452f, hood: true, heavy: true, scale: 1.16 },
+  FLANKER: { suit: 0x344643, armor: 0x24302d, neon: 0x56c2a8, hood: true, gun: true, scale: 0.94 },
   ELITE: { suit: 0x35393b, armor: 0x26292c, neon: 0xcc5f26, hood: true, gun: true, scale: 1.15 },
   BOSS: { suit: 0x2b2b28, armor: 0x1f201d, neon: 0xa83524, hood: true, heavy: true, scale: 2.3 },
 }

@@ -117,6 +117,8 @@ export class LabelSystem {
     }
     entry.mesh.position.set(x, y + (kind === 'BOSS' ? 6 : 1.8), z)
     entry.mesh.quaternion.copy(camQuat)
+    const baseScale = kind === 'BOSS' ? 2.45 : 1.55
+    entry.mesh.scale.setScalar(locked ? baseScale * 1.12 : baseScale)
   }
 
   labelY(kind: EnemyKind): number {

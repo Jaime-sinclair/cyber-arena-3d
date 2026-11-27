@@ -1,7 +1,8 @@
 /** Shared types for the simulation, the view layer and the network protocol. */
 import type { EnemyKind } from './constants'
+import type { CurriculumSnapshot } from './typing'
 
-export type { EnemyKind }
+export type { EnemyKind, CurriculumSnapshot }
 
 export interface InputState {
   /** Movement axes, each -1 | 0 | 1 (screen-space: x right, z down). */
@@ -58,6 +59,19 @@ export interface Enemy {
   kind: EnemyKind
   x: number
   z: number
+  /** Persistent horizontal velocity for smooth steering/acceleration. */
+  vx: number
+  vz: number
+  /** Facing angle in radians (smoothly turned toward movement/target). */
+  ang: number
+  /** Deterministic flank direction (-1 or 1) for varied approach angles. */
+  flankSign: number
+  /** Timer until flanker re-evaluates its approach angle. */
+  flankTimer: number
+  /** Attack windup/telegraph timer (> 0 while preparing to fire). */
+  windup: number
+  /** Post-attack recovery timer (> 0 right after firing). */
+  recover: number
   /** Airborne height — launched by blasts (combat physics). */
   y: number
   vy: number
@@ -120,7 +134,7 @@ export interface Mortar {
 }
 
 export type SimEvent =
-  | { t: 'kill'; id: number; x: number; z: number; kind: EnemyKind; by: number; combo: number; milestone: boolean
+  | { t: 'kill'; id: number; x: number; z: number; kind: EnemyKind; by: number; combo: number; milestone: boolean; speedKill?: boolean
       /** Ragdoll launch: impulse direction (normalized-ish), spin rate, lift. */
       dx?: number; dz?: number; spin?: number; vy?: number }
   | { t: 'hurt'; p: number; x: number; z: number }
@@ -130,7 +144,8 @@ export type SimEvent =
   | { t: 'bossphase'; phase: number }
   | { t: 'seq'; id: number; seq: string; kind: EnemyKind }
   | { t: 'pickup'; p: number; x: number; z: number }
-  | { t: 'shot'; x: number; z: number; kind: EnemyKind }
+  | { t: 'shot'; id?: number; x: number; z: number; kind: EnemyKind }
+  | { t: 'windup'; id: number; x: number; z: number; kind: EnemyKind }
   | { t: 'shock'; x: number; z: number }
   | { t: 'blast'; x: number; z: number; r: number }
   | { t: 'mortar'; x: number; z: number; vx: number; vz: number; vy: number }
@@ -164,6 +179,12 @@ export interface ViewEnemy {
   x: number
   z: number
   y: number
+  ang?: number
+  vx?: number
+  vz?: number
+  stag?: number
+  windup?: number
+  recover?: number
   ti: number
   seq: string
   hp: number
@@ -200,6 +221,10 @@ export interface ViewModel {
   bossMax: number
   /** Which enemy the local player is locked onto (-1 = none). */
   lockId: number
+  /** Best candidate enemy to lock next when unlocked (-1 = none). */
+  candidateId?: number
+  /** Hybrid curriculum vocabulary mastery snapshot. */
+  curriculum?: CurriculumSnapshot
 }
 
 /* ---------- Network snapshots (compact, array-of-arrays) ---------- */
@@ -236,4 +261,4 @@ export interface Snapshot {
   bmx: number
 }
 
-export const ENEMY_KIND_ORDER: EnemyKind[] = ['RUNNER', 'GRUNT', 'ELITE', 'BOSS']
+export const ENEMY_KIND_ORDER: EnemyKind[] = ['RUNNER', 'GRUNT', 'ELITE', 'BOSS', 'FLANKER']
